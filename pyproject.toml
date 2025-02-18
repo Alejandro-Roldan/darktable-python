@@ -1,0 +1,75 @@
+# pyproject.toml
+
+[build-system]
+# Or others
+requires = ["setuptools >= 64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+# Required static
+name = "darktable-python"
+
+# Can be made dynamic with
+#   dynamic = ["version", dependencies", ...]
+# And then the definition its build-system specific
+version = "0.0.1a"
+description = ""
+readme = {file = "README.md", content-type = "text/markdown"}
+license = {file = "LICENSE"}
+authors = [
+  {name = "Jonas van den Berg"},
+]
+maintainers = [
+  {name = "Jonas van den Berg"},
+]
+
+requires-python = ">=3.12"
+dependencies = [
+	"exif == 1.6.0",
+	"pillow == 10.4.0",
+	"plum-py == 0.8.7",
+	"python-dateutil == 2.9.0.post0",
+	"simple_cache == 0.35",
+	"six == 1.16.0"
+]
+
+[project.optional-dependencies]
+lint = [
+	"black >= 24.8.0",
+    "isort >= 5.13.0",
+	"flake8 >= 7.1.0"
+]
+dev = [
+	"darktable-python[lint]"
+]
+
+[project.scripts]
+darktable_db_inconsistencies = "database_inconsistencies:main"
+
+[project.urls]
+Homepage = "https://github.com/ungive/darktable-python"
+Repository = "https://github.com/ungive/darktable-python"
+
+[tool.black]
+line-length = 88
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | \.env
+  | _build
+  | buck-out
+  | build
+  | dist
+  | blib2to3
+  | tests/data
+)/
+'''
+
+[tool.isort]
+profile = "black"
+skip_gitignore = true
