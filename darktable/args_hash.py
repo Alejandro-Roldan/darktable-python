@@ -4,10 +4,10 @@
 import hashlib
 
 
-def _tob(_string, enc='utf8'):
+def _tob(_string, enc="utf8"):
     if isinstance(_string, str):
         return _string.encode(enc)
-    return b'' if _string is None else bytes(_string)
+    return b"" if _string is None else bytes(_string)
 
 
 def args_hash(*args, **kw):
@@ -17,8 +17,7 @@ def args_hash(*args, **kw):
     hash key.
     """
     items = list(args) + [i for t in sorted(kw.items()) for i in t]
-    items = ('__NoneType__' if _i is None else _i
-             for _i in items)
+    items = ("__NoneType__" if _i is None else _i for _i in items)
     # All items must be strings
-    args_string = '|'.join(items)
+    args_string = "|".join(items)
     return hashlib.sha1(_tob(args_string)).hexdigest()
