@@ -1,4 +1,5 @@
 # Darktable Python Library
+[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
 The aim of this project is the following:
 
@@ -12,10 +13,8 @@ The aim of this project is the following:
 ## Setup
 
 ```sh
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install -U pip
-pip install -r requirements.txt
+git clone https://github.com/ungive/darktable-python && cd darktable-python
+python -m pip install .
 ```
 
 ## Check for XMP inconsistencies
