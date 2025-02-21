@@ -18,6 +18,7 @@ import dateutil.parser
 import exif
 from PIL import Image
 
+from darktable import formats
 from darktable.args_hash import args_hash
 from darktable.util import Cache, filehash, fullname, readonly_sqlite_connection
 
@@ -207,24 +208,24 @@ class Exporter:
     def __init__(
         self,
         *,
-        cache_key,
-        cli_bin,
-        config_dir,
-        filename_format,
-        out_ext,
-        format_options,
-        hq_resampling,
-        width,
-        height,
-        exif_artist=None,
-        exif_copyright=None,
-        debug=False,
-        xmp_changes=[],
+        cache_key: str,
+        cli_bin: str,
+        config_dir: str,
+        filename_format: str,
+        # out_ext,
+        format_options: formats._ImgFormat,
+        hq_resampling: bool,
+        width: int,
+        height: int,
+        exif_artist: str = None,
+        exif_copyright: str = None,
+        debug: bool = False,
+        xmp_changes: list = [],
     ):
         self.cli_bin = cli_bin
         self.config_dir = config_dir
         self.filename_format = filename_format
-        self.out_ext = out_ext
+        self.out_ext = format_options.ext
         self.format_options = format_options
         self.hq_resampling = hq_resampling
         self.width = width
@@ -240,7 +241,7 @@ class Exporter:
             cli_bin=str(cli_bin),
             config_dir=str(config_dir),
             filename_format=str(filename_format),
-            out_ext=str(out_ext),
+            out_ext=str(format_options.ext),
             format_options=str(format_options),
             hq_resampling=str(hq_resampling),
             width=str(width),
@@ -266,7 +267,7 @@ class Exporter:
     def __del__(self):
         os.unlink(self.tmp_xmp_name)
 
-    def export_cached(self, photo: Photo, out_dir: str) -> Export:
+    def export_cached(self, photo: Photo, out_dir: str, do_exif: bool = True) -> Export:
         """Exports a photo to a directory through Darktable's CLI interface,
         but only if there are changes to the XMP
         or it hasn't been exported yet.
@@ -283,14 +284,14 @@ class Exporter:
             if xmp_hash == self.cache_xmp_hashes.load(cache_key):
                 return Export(photo, filepath=export_filepath)
 
-        export = self.export(photo, out_dir=out_dir)
+        export = self.export(photo, out_dir, do_exif)
 
         self.cache_xmp_hashes.save(cache_key, xmp_hash)
         self.cache_exported.save(cache_key, export.filepath)
 
         return export
 
-    def export(self, photo: Photo, out_dir: str) -> Export:
+    def export(self, photo: Photo, out_dir: str, do_exif: bool = True) -> Export:
         """Exports a photo to a directory through Darktable's CLI interface.
         Returns a copy of the photo instance where export_filepath is set.
         """
@@ -317,20 +318,19 @@ class Exporter:
             "--height",
             str(self.height),
             "--out-ext",
-            self.out_ext,
+            str(self.out_ext),
             "--hq",
-            self.hq_resampling,
+            str(self.hq_resampling),
             "--upscale",
             "false",
             "--apply-custom-presets",
             "false",
             "--core",  # everything after this are darktable core parameters
             "--configdir",
-            self.config_dir,
+            str(self.config_dir),
         ]
-        for option in self.format_options:
-            command.append("--conf")
-            command.append(f"plugins/imageio/format/{option}")
+        # Add format options to the command
+        command += self.format_options.conf_listed()
 
         if self.debug:
             print("xmp:", photo.xmp_path)
@@ -347,6 +347,10 @@ class Exporter:
 
         export_filepath = match.groups()[0]
         self._sess_exported.add(export_filepath)
+
+        # Rewrite EXIF? python exif only has support for JPG & PNG
+        if not do_exif:
+            return Export(photo, filepath=export_filepath)
 
         # save personal details in exif
         with open(export_filepath, "rb") as image_file:
