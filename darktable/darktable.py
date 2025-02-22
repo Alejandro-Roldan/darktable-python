@@ -117,6 +117,7 @@ class Photo(HasId):
         )
 
 
+# Not used
 def parse_format_options(options_list: str):
     return list(filter(None, re.split(r"[,;\s]", options_list)))
 
@@ -160,6 +161,7 @@ class Export:
         return f"Export({self.filepath}, {self.photo})"
 
 
+# Not used
 class FilenameFormat:
     """Implements a Darktable format string for export filenames.
     Only supports a subset of variables as not all are used here.
@@ -203,6 +205,15 @@ class FilenameFormat:
         return result
 
 
+# TODO
+class ColorProfiles:
+    """https://docs.darktable.org/usermanual/development/en/module-reference/processing-modules/output-color-profile/"""
+
+
+class RenderingIntent:
+    """https://docs.darktable.org/usermanual/development/en/special-topics/color-management/rendering-intent/"""
+
+
 # TODO Explain how to use this class and what arguments to pass with an example
 class Exporter:
     def __init__(
@@ -212,31 +223,51 @@ class Exporter:
         cli_bin: str,
         config_dir: str,
         filename_format: str,
-        # out_ext,
         format_options: formats._ImgFormat,
-        hq_resampling: bool,
-        width: int,
-        height: int,
+        width: int = 0,
+        height: int = 0,
+        hq_resampling: bool = False,
+        upscale: bool = False,
+        style: str = "",
+        style_overwrite: bool = False,
+        # TODO: test True
+        # apply_custom_presets: bool = True
+        apply_custom_presets: bool = False,
+        icc_type: ColorProfile = "image specified",
+        icc_file: str = "",
+        icc_intent: RenderingIntent = "image specified",
+        debug: bool = False,
         exif_artist: str = None,
         exif_copyright: str = None,
-        debug: bool = False,
         xmp_changes: list = [],
     ):
+        # Darktable-cli arguments
         self.cli_bin = cli_bin
         self.config_dir = config_dir
         self.filename_format = filename_format
         self.out_ext = format_options.ext
         self.format_options = format_options
-        self.hq_resampling = hq_resampling
         self.width = width
         self.height = height
+        self.hq_resampling = hq_resampling
+        self.upscale = upscale
+        self.style = style
+        self.style_overwrite = style_overwrite
+        self.apply_custom_presets = apply_custom_presets
+        self.icc_type = icc_type
+        self.icc_file = icc_file
+        self.icc_intent = icc_intent
+        self.debug = debug
+
+        # Extra Exif data
         self.exif_artist = exif_artist
         self.exif_copyright = exif_copyright
-        self.debug = debug
+
         self.xmp_changes = xmp_changes
         fd, self.tmp_xmp_name = tempfile.mkstemp(suffix=".xmp")
         os.close(fd)
 
+        # Create id hash
         self.args_hash = args_hash(
             cli_bin=str(cli_bin),
             config_dir=str(config_dir),
@@ -248,6 +279,8 @@ class Exporter:
             height=str(height),
             xmp_changes=str([fullname(func) for func in xmp_changes]),
         )
+
+        # Create caches
         self.cache = Cache(
             path.join(MODULE_DIR, CACHE_FILENAME), prefix=f"{cache_key}:main:"
         )
@@ -312,25 +345,37 @@ class Exporter:
             # TODO convert any path to pure posix paths (since that's required here)
             xmp_path,
             out_path,
-            # TODO if width and height is not set, don't pass it as a parameter
             "--width",
             str(self.width),
             "--height",
             str(self.height),
-            "--out-ext",
-            str(self.out_ext),
             "--hq",
             str(self.hq_resampling),
             "--upscale",
-            "false",
+            str(self.upscale),
+            "style",
+            str(self.style_name),
+            lambda x: "--style-overwrite" if self.style_overwrite else "",
             "--apply-custom-presets",
-            "false",
+            # "false",
+            str(self.apply_custom_presets),
+            "--out-ext",
+            str(self.out_ext),
+            # TODO
+            # "--input",  # multi input, CANT be combined with og input
+            "--icc-type",
+            str(self.icc_type),
+            "--icc-file",
+            str(self.icc_file),
+            "--icc-intent",
+            str(self.icc_intent),
+            lambda x: "--verbose" if self.debug else "",
             "--core",  # everything after this are darktable core parameters
             "--configdir",
             str(self.config_dir),
         ]
         # Add format options to the command
-        command += self.format_options.conf_listed()
+        command += self.format_options.configuration_listed()
 
         if self.debug:
             print("xmp:", photo.xmp_path)

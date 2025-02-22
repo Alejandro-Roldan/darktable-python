@@ -2,7 +2,8 @@ class _ImgFormat:
     def __init__(self):
         self.options = {}
 
-    def conf_listed(self):
+    def configuration_listed(self):
+        """Generate the proper list with the configuration options properly formatted"""
         conf = []
         for option, value in self.options.items():
             conf.append("--conf")
