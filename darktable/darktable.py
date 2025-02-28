@@ -8,7 +8,7 @@ import tempfile
 from collections import defaultdict
 from enum import Enum
 from io import TextIOWrapper
-from os import path
+from os import PathLike, path
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable
 from xml.etree import ElementTree
@@ -57,8 +57,9 @@ class Tag(HasId):
         return f"{self.__class__.__name__}({self.id}, {self.name})"
 
 
-# https://github.com/darktable-org/darktable/blob/7b86507f/src/common/colorlabels.h#L29
 class ColorLabel(Enum):
+    """https://github.com/darktable-org/darktable/blob/7b86507f/src/common/colorlabels.h#L29"""
+
     RED = 0
     YELLOW = 1
     GREEN = 2
@@ -205,15 +206,6 @@ class FilenameFormat:
         return result
 
 
-# TODO
-class ColorProfiles:
-    """https://docs.darktable.org/usermanual/development/en/module-reference/processing-modules/output-color-profile/"""
-
-
-class RenderingIntent:
-    """https://docs.darktable.org/usermanual/development/en/special-topics/color-management/rendering-intent/"""
-
-
 # TODO Explain how to use this class and what arguments to pass with an example
 class Exporter:
     def __init__(
@@ -230,12 +222,10 @@ class Exporter:
         upscale: bool = False,
         style: str = "",
         style_overwrite: bool = False,
-        # TODO: test True
-        # apply_custom_presets: bool = True
-        apply_custom_presets: bool = False,
-        icc_type: ColorProfile = "image specified",
-        icc_file: str = "",
-        icc_intent: RenderingIntent = "image specified",
+        apply_custom_presets: bool = True,
+        icc_type: formats.OutputColorProfile = formats.OutputColorProfile.NONE,
+        icc_file: str | PathLike = "",
+        icc_intent: formats.RenderingIntent = formats.RenderingIntent.IMAGE_SETTINGS,
         debug: bool = False,
         exif_artist: str = None,
         exif_copyright: str = None,
@@ -254,9 +244,9 @@ class Exporter:
         self.style = style
         self.style_overwrite = style_overwrite
         self.apply_custom_presets = apply_custom_presets
-        self.icc_type = icc_type
-        self.icc_file = icc_file
-        self.icc_intent = icc_intent
+        self.icc_type = icc_type.name
+        self.icc_file = icc_file if os.path.exists(icc_file) else None
+        self.icc_intent = icc_intent.name
         self.debug = debug
 
         # Extra Exif data
@@ -353,11 +343,10 @@ class Exporter:
             str(self.hq_resampling),
             "--upscale",
             str(self.upscale),
-            "style",
-            str(self.style_name),
-            lambda x: "--style-overwrite" if self.style_overwrite else "",
+            "--style" if self.style else "",
+            str(self.style),
+            "--style-overwrite" if self.style_overwrite else "",
             "--apply-custom-presets",
-            # "false",
             str(self.apply_custom_presets),
             "--out-ext",
             str(self.out_ext),
@@ -365,17 +354,20 @@ class Exporter:
             # "--input",  # multi input, CANT be combined with og input
             "--icc-type",
             str(self.icc_type),
-            "--icc-file",
-            str(self.icc_file),
-            "--icc-intent",
-            str(self.icc_intent),
-            lambda x: "--verbose" if self.debug else "",
-            "--core",  # everything after this are darktable core parameters
+            "--icc-file" if self.icc_file is not None else "",
+            str(self.icc_file) if self.icc_file is not None else "",
+            "--icc-intent" if self.icc_intent != "IMAGE_SETTINGS" else "",
+            str(self.icc_intent) if self.icc_intent != "IMAGE_SETTINGS" else "",
+            "--verbose" if self.debug else "",
+            # Everything after this are darktable core parameters
+            "--core",
             "--configdir",
             str(self.config_dir),
         ]
         # Add format options to the command
         command += self.format_options.configuration_listed()
+        # Remove empty strs from the command list (NEEDED)
+        command[:] = [x for x in command if x]
 
         if self.debug:
             print("xmp:", photo.xmp_path)
@@ -384,6 +376,7 @@ class Exporter:
         result = subprocess.run(command, capture_output=True, text=True)
         if self.debug:
             print(result.stdout.rstrip())
+            print(result.stderr.rstrip())
 
         # extract the exported filename
         match = re.search(r"exported to `([^\']+)\'", result.stdout)

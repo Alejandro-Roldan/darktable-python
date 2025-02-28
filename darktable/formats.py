@@ -1,3 +1,56 @@
+from enum import Enum
+
+
+class OutputColorProfile(Enum):
+    """https://docs.darktable.org/usermanual/development/en/module-reference/processing-modules/output-color-profile/
+
+    The CLI err output for this option lists a lot more profiles than the docu
+    """
+
+    NONE = 0
+    FILE = 1
+    SRGB = 2
+    ADOBERGB = 3
+    LIN_REC709 = 4
+    LIN_REC2020 = 5
+    XYZ = 6
+    LAB = 7
+    INFRARED = 8
+    DISPLAY = 9
+    EMBEDDED_ICC = 10
+    EMBEDDED_MATRIX = 11
+    STANDARD_MATRIX = 12
+    ENHANCED_MATRIX = 13
+    VENDOR_MATRIX = 14
+    ALTERNATE_MATRIX = 15
+    BRG = 16
+    EXPORT = 17
+    SOFTPROOF = 18
+    WORK = 19
+    DISPLAY2 = 20
+    REC709 = 21
+    PROPHOTO_RGB = 22
+    PQ_REC2020 = 23
+    HLG_REC2020 = 24
+    PQ_P3 = 25
+    HLG_P3 = 26
+    DISPLAY_P3 = 27
+
+
+class RenderingIntent(Enum):
+    """https://docs.darktable.org/usermanual/development/en/special-topics/color-management/rendering-intent/
+
+    This only takes place if rendering with LittleCMS2, which has to be defined via the
+    darktable configuration options
+    """
+
+    IMAGE_SETTINGS = 0
+    PERCEPTUAL = 1
+    RELATIVE_COLORIMETRIC = 2
+    SATURATION = 3
+    ABSOLUTE_COLORIMETRIC = 4
+
+
 class _ImgFormat:
     def __init__(self):
         self.options = {}
