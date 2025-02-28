@@ -206,8 +206,41 @@ class FilenameFormat:
         return result
 
 
-# TODO Explain how to use this class and what arguments to pass with an example
 class Exporter:
+    """Handles all the options to use at export and cacheing.
+
+    Neccesary arguments:
+        cache_key: str  Cache key to use
+        cli_bin: str    Path to darktable-cli program
+        config_dir: str Path to darktable's config dir to use
+        filename_format: str    Filename format to use. Darktable variables supported
+        format_options: formats._ImgFormat  Format options to use. Defined with a
+                                            formats._ImgFormat derived class
+
+    Optional Arguments
+        width: int  Max width. Defaults to 0 (uses image width)
+        height: int Max height. Defaults to 0 (uses image height)
+        hq_resampling: bool Use high quality resampling. Defaults to True
+        upscale: bool   Allow upscaling. Defaults to False
+        style: str  Style name to apply. If used config_dir must also be supplied.
+                    Defaults to no style
+        style_overwrite: bool   Overwrite instead of append. Defualts to False
+        apply_custom_presets: bool  Load data.db. Allows use of styles, but prevents
+                                    multi db instance. Defaults to True
+        icc_type: formats.OutputColorProfile    ICC profile. Defaults to NONE
+        icc_file: str | PathLike    ICC file. Defaults to empty str
+        icc_intent: formats.RenderingIntent Rendering Intent (when using LittleCMS2).
+                                            Defaults to IMAGE_SETTINGS
+        debug: bool Debug info. Defaults to False
+        exif_artist: str    EXIF data to apply. Defaults to None
+        exif_copyright: str    EXIF data to apply. Defaults to None
+        xmp_changes: list = []
+
+    More info on the darktable-cli arguments:
+    https://docs.darktable.org/usermanual/4.0/en/special-topics/program-invocation/darktable-cli
+    https://docs.darktable.org/usermanual/4.0/en/special-topics/program-invocation/darktable
+    """
+
     def __init__(
         self,
         *,
@@ -218,7 +251,7 @@ class Exporter:
         format_options: formats._ImgFormat,
         width: int = 0,
         height: int = 0,
-        hq_resampling: bool = False,
+        hq_resampling: bool = True,
         upscale: bool = False,
         style: str = "",
         style_overwrite: bool = False,
@@ -290,6 +323,7 @@ class Exporter:
     def __del__(self):
         os.unlink(self.tmp_xmp_name)
 
+    # TODO: add str, path, folder and list of support (*args ?)
     def export_cached(self, photo: Photo, out_dir: str, do_exif: bool = True) -> Export:
         """Exports a photo to a directory through Darktable's CLI interface,
         but only if there are changes to the XMP
@@ -327,8 +361,6 @@ class Exporter:
             xmp_path = self.tmp_xmp_name
 
         out_path = str(PurePosixPath(out_dir, self.filename_format))
-        # https://docs.darktable.org/usermanual/4.0/en/special-topics/program-invocation/darktable-cli
-        # https://docs.darktable.org/usermanual/4.0/en/special-topics/program-invocation/darktable
         command = [
             self.cli_bin,
             photo.filepath,
