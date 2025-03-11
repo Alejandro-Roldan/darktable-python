@@ -2,7 +2,6 @@ import os
 import re
 import sys
 from xml.etree import ElementTree
-from xml.etree.ElementTree import Element
 
 from darktable import darktable
 

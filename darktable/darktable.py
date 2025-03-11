@@ -3,28 +3,14 @@ import os
 import re
 import sqlite3
 import string
-import subprocess
-import tempfile
 from collections import defaultdict
 from enum import Enum
-from io import TextIOWrapper
-from os import PathLike, path
-from pathlib import Path, PurePosixPath
-from typing import Any, Callable
-from xml.etree import ElementTree
-from xml.etree.ElementTree import Element
+from os import path
+from typing import Any
 
 import dateutil.parser
-import exif
-from PIL import Image
 
-from darktable import formats
-from darktable.args_hash import args_hash
-from darktable.util import Cache, filehash, fullname, readonly_sqlite_connection
-
-MODULE_DIR = path.abspath(path.dirname(__file__))
-CACHE_FILENAME = os.path.splitext(__file__)[0] + ".cache.pkl"
-
+from darktable.util import readonly_sqlite_connection
 
 Position = int
 
@@ -58,7 +44,9 @@ class Tag(HasId):
 
 
 class ColorLabel(Enum):
-    """https://github.com/darktable-org/darktable/blob/7b86507f/src/common/colorlabels.h#L29"""
+    """
+    https://github.com/darktable-org/darktable/blob/7b86507f/src/common/colorlabels.h#L29
+    """
 
     RED = 0
     YELLOW = 1
@@ -119,50 +107,6 @@ class Photo(HasId):
 
 
 # Not used
-def parse_format_options(options_list: str):
-    return list(filter(None, re.split(r"[,;\s]", options_list)))
-
-
-class Export:
-    def __init__(self, photo: Photo, filepath: str):
-        self.photo: Photo = photo
-        self.filepath: str = filepath
-
-    @property
-    def filepath(self):
-        return self._filepath
-
-    @filepath.setter
-    def filepath(self, value):
-        self._filepath = value
-        self._width = None
-        self._height = None
-
-    @property
-    def width(self):
-        if self._width is None:
-            self._read_export_attributes()
-        return self._width
-
-    @property
-    def height(self):
-        if self._height is None:
-            self._read_export_attributes()
-        return self._height
-
-    @property
-    def aspect_ratio(self):
-        return float(self.width) / self.height
-
-    def _read_export_attributes(self):
-        with Image.open(self.filepath) as image:
-            self._width, self._height = image.size
-
-    def __repr__(self):
-        return f"Export({self.filepath}, {self.photo})"
-
-
-# Not used
 class FilenameFormat:
     """Implements a Darktable format string for export filenames.
     Only supports a subset of variables as not all are used here.
@@ -206,274 +150,6 @@ class FilenameFormat:
         return result
 
 
-class Exporter:
-    """Handles all the options to use at export and cacheing.
-
-    Neccesary arguments:
-        cache_key: str  Cache key to use
-        cli_bin: str    Path to darktable-cli program
-        config_dir: str Path to darktable's config dir to use
-        filename_format: str    Filename format to use. Darktable variables supported
-        format_options: formats._ImgFormat  Format options to use. Defined with a
-                                            formats._ImgFormat derived class
-
-    Optional Arguments
-        width: int  Max width. Defaults to 0 (uses image width)
-        height: int Max height. Defaults to 0 (uses image height)
-        hq_resampling: bool Use high quality resampling. Defaults to True
-        upscale: bool   Allow upscaling. Defaults to False
-        style: str  Style name to apply. If used config_dir must also be supplied.
-                    Defaults to no style
-        style_overwrite: bool   Overwrite instead of append. Defualts to False
-        apply_custom_presets: bool  Load data.db. Allows use of styles, but prevents
-                                    multi db instance. Defaults to True
-        icc_type: formats.OutputColorProfile    ICC profile. Defaults to NONE
-        icc_file: str | PathLike    ICC file. Defaults to empty str
-        icc_intent: formats.RenderingIntent Rendering Intent (when using LittleCMS2).
-                                            Defaults to IMAGE_SETTINGS
-        debug: bool Debug info. Defaults to False
-        exif_artist: str    EXIF data to apply. Defaults to None
-        exif_copyright: str    EXIF data to apply. Defaults to None
-        xmp_changes: list = []
-
-    More info on the darktable-cli arguments:
-    https://docs.darktable.org/usermanual/4.0/en/special-topics/program-invocation/darktable-cli
-    https://docs.darktable.org/usermanual/4.0/en/special-topics/program-invocation/darktable
-    """
-
-    def __init__(
-        self,
-        *,
-        cache_key: str,
-        cli_bin: str,
-        config_dir: str,
-        filename_format: str,
-        format_options: formats._ImgFormat,
-        width: int = 0,
-        height: int = 0,
-        hq_resampling: bool = True,
-        upscale: bool = False,
-        style: str = "",
-        style_overwrite: bool = False,
-        apply_custom_presets: bool = True,
-        icc_type: formats.OutputColorProfile = formats.OutputColorProfile.NONE,
-        icc_file: str | PathLike = "",
-        icc_intent: formats.RenderingIntent = formats.RenderingIntent.IMAGE_SETTINGS,
-        debug: bool = False,
-        exif_artist: str = None,
-        exif_copyright: str = None,
-        xmp_changes: list = [],
-    ):
-        # Darktable-cli arguments
-        self.cli_bin = cli_bin
-        self.config_dir = config_dir
-        self.filename_format = filename_format
-        self.out_ext = format_options.ext
-        self.format_options = format_options
-        self.width = width
-        self.height = height
-        self.hq_resampling = hq_resampling
-        self.upscale = upscale
-        self.style = style
-        self.style_overwrite = style_overwrite
-        self.apply_custom_presets = apply_custom_presets
-        self.icc_type = icc_type.name
-        self.icc_file = icc_file if os.path.exists(icc_file) else None
-        self.icc_intent = icc_intent.name
-        self.debug = debug
-
-        # Extra Exif data
-        self.exif_artist = exif_artist
-        self.exif_copyright = exif_copyright
-
-        self.xmp_changes = xmp_changes
-        fd, self.tmp_xmp_name = tempfile.mkstemp(suffix=".xmp")
-        os.close(fd)
-
-        # Create id hash
-        self.args_hash = args_hash(
-            cli_bin=str(cli_bin),
-            config_dir=str(config_dir),
-            filename_format=str(filename_format),
-            out_ext=str(format_options.ext),
-            format_options=str(format_options),
-            hq_resampling=str(hq_resampling),
-            width=str(width),
-            height=str(height),
-            xmp_changes=str([fullname(func) for func in xmp_changes]),
-        )
-
-        # Create caches
-        self.cache = Cache(
-            path.join(MODULE_DIR, CACHE_FILENAME), prefix=f"{cache_key}:main:"
-        )
-        self.cache_xmp_hashes = Cache(
-            path.join(MODULE_DIR, CACHE_FILENAME), prefix=f"{cache_key}:xmp:"
-        )
-        self.cache_exported = Cache(
-            path.join(MODULE_DIR, CACHE_FILENAME), prefix=f"{cache_key}:export:"
-        )
-        if self.args_hash != self.cache.load("args_hash"):
-            self.cache_exported.prune()
-            self.cache_xmp_hashes.prune()
-        self.cache.save("args_hash", self.args_hash)
-
-        self._sess_exported = set()
-
-    def __del__(self):
-        os.unlink(self.tmp_xmp_name)
-
-    # TODO: add str, path, folder and list of support (*args ?)
-    def export_cached(self, photo: Photo, out_dir: str, do_exif: bool = True) -> Export:
-        """Exports a photo to a directory through Darktable's CLI interface,
-        but only if there are changes to the XMP
-        or it hasn't been exported yet.
-        Returns a copy of the photo instance where export_filepath is set.
-        """
-
-        # TODO hash the class instead and return this identifier
-        cache_key = f"{photo.filepath}:{photo.version}"
-
-        xmp_hash = filehash(photo.xmp_path)
-        export_filepath = self.cache_exported.load(cache_key)
-        if export_filepath is not None and path.exists(export_filepath):
-            self._sess_exported.add(export_filepath)
-            if xmp_hash == self.cache_xmp_hashes.load(cache_key):
-                return Export(photo, filepath=export_filepath)
-
-        export = self.export(photo, out_dir, do_exif)
-
-        self.cache_xmp_hashes.save(cache_key, xmp_hash)
-        self.cache_exported.save(cache_key, export.filepath)
-
-        return export
-
-    def export(self, photo: Photo, out_dir: str, do_exif: bool = True) -> Export:
-        """Exports a photo to a directory through Darktable's CLI interface.
-        Returns a copy of the photo instance where export_filepath is set.
-        """
-
-        xmp_path = photo.xmp_path
-
-        if len(self.xmp_changes) > 0:
-            with open(self.tmp_xmp_name, "wb") as tmp_xmp_file:
-                modify_xmp(xmp_path, tmp_xmp_file, changes=self.xmp_changes)
-            xmp_path = self.tmp_xmp_name
-
-        out_path = str(PurePosixPath(out_dir, self.filename_format))
-        command = [
-            self.cli_bin,
-            photo.filepath,
-            # TODO convert any path to pure posix paths (since that's required here)
-            xmp_path,
-            out_path,
-            "--width",
-            str(self.width),
-            "--height",
-            str(self.height),
-            "--hq",
-            str(self.hq_resampling),
-            "--upscale",
-            str(self.upscale),
-            "--style" if self.style else "",
-            str(self.style),
-            "--style-overwrite" if self.style_overwrite else "",
-            "--apply-custom-presets",
-            str(self.apply_custom_presets),
-            "--out-ext",
-            str(self.out_ext),
-            # TODO
-            # "--input",  # multi input, CANT be combined with og input
-            "--icc-type",
-            str(self.icc_type),
-            "--icc-file" if self.icc_file is not None else "",
-            str(self.icc_file) if self.icc_file is not None else "",
-            "--icc-intent" if self.icc_intent != "IMAGE_SETTINGS" else "",
-            str(self.icc_intent) if self.icc_intent != "IMAGE_SETTINGS" else "",
-            "--verbose" if self.debug else "",
-            # Everything after this are darktable core parameters
-            "--core",
-            "--configdir",
-            str(self.config_dir),
-        ]
-        # Add format options to the command
-        command += self.format_options.configuration_listed()
-        # Remove empty strs from the command list (NEEDED)
-        command[:] = [x for x in command if x]
-
-        if self.debug:
-            print("xmp:", photo.xmp_path)
-            print(" ".join([f"'{word}'" for word in command]))
-
-        result = subprocess.run(command, capture_output=True, text=True)
-        if self.debug:
-            print(result.stdout.rstrip())
-            print(result.stderr.rstrip())
-
-        # extract the exported filename
-        match = re.search(r"exported to `([^\']+)\'", result.stdout)
-        if not match:
-            raise RuntimeError("expected darktable-cli output to contain filename")
-
-        export_filepath = match.groups()[0]
-        self._sess_exported.add(export_filepath)
-
-        # Rewrite EXIF? python exif only has support for JPG & PNG
-        if not do_exif:
-            return Export(photo, filepath=export_filepath)
-
-        # save personal details in exif
-        with open(export_filepath, "rb") as image_file:
-            original_exif_image = exif.Image(image_file)
-
-        # remove exif data
-        image = Image.open(export_filepath)
-        data = list(image.getdata())
-        image_noexif = Image.new(image.mode, image.size)
-        image_noexif.putdata(data)
-        image_noexif.save(export_filepath)
-        image_noexif.close()
-
-        # save personal details in exif
-        with open(export_filepath, "rb") as image_file:
-            exif_image = exif.Image(image_file)
-        if self.exif_artist is not None:
-            exif_image.set("artist", self.exif_artist)
-        if self.exif_copyright is not None:
-            exif_image.set("copyright", self.exif_copyright)
-        exif_image.set(
-            "datetime_original", original_exif_image.get("datetime_original")
-        )
-        with open(export_filepath, "wb") as image_file:
-            image_file.write(exif_image.get_file())
-
-        return Export(photo, filepath=export_filepath)
-
-    def sync(self, directory):
-        """Removes all files in the given directory, except:
-        - Files that have been exported during this session and
-        - Files that would have been exported but already existed.
-        The current session starts at object creation
-        and is reset (cleared) whenever sync() is called.
-        """
-        for filepath_obj in Path(directory).glob("**/*"):
-            filepath = str(filepath_obj)
-            if filepath_obj.is_file() and filepath not in self._sess_exported:
-                if not is_raw_photo_ext(path.splitext(filepath)[1]):
-                    # Remove all data associated with the photo from the cache
-                    # and delete the exported photo from the directory.
-                    for cache_key in self.cache_exported.keys(has_value=filepath):
-                        print(f"Removed from portfolio: {cache_key}")
-                        self.cache_exported.delete(cache_key)
-                        self.cache_xmp_hashes.delete(cache_key)
-                    try:
-                        os.remove(filepath)
-                    except Exception:
-                        pass
-
-        self._sess_exported.clear()
-
-
 def parse_darktable_datetime(datetime_taken: int):
     # the timestamp is in microseconds
     # additionally, it uses an origin different than epoch time
@@ -495,7 +171,7 @@ class AttachedDatabase:
         self.cursor.execute(
             """--sql
             ATTACH DATABASE ? AS ?;
-        """,
+            """,
             (self.db_path, self.name),
         )
 
@@ -506,7 +182,7 @@ class AttachedDatabase:
         self.cursor.execute(
             """--sql
             DETACH ?;
-        """,
+            """,
             (self.name,),
         )
 
@@ -597,7 +273,7 @@ class DarktableLibrary:
                 {where_clause}
                 GROUP BY images.id
                 {f'LIMIT {limit}' if limit is not None and limit >= 0 else ''}
-            """,
+                """,
                 (separator, separator, separator, separator) + args,
             )
             result = cur.fetchall()
@@ -610,7 +286,7 @@ class DarktableLibrary:
         photos = self._select_photos(
             """--sql
             WHERE images.id = ? AND tagged_images.tagid=?
-        """,
+            """,
             (id, tag.id),
             limit=1,
         )
@@ -624,7 +300,7 @@ class DarktableLibrary:
             FROM tags
             WHERE name=?
             LIMIT 1
-        """,
+            """,
             (tag_name,),
         )
         id, name = cur.fetchone()
@@ -634,7 +310,7 @@ class DarktableLibrary:
         return self._select_photos(
             """--sql
             WHERE tagged_images.tagid=? AND LOWER(data.tags.name) NOT LIKE 'darktable%'
-        """,
+            """,
             (tag.id,),
         )
 
@@ -644,13 +320,14 @@ class DarktableLibrary:
         E.g. tag_name="foo" yields "bar" for "foo|bar",
         but not "foo" if a tag is named "foo" only.
         """
+
         cur = self.data_conn.cursor()
         cur.execute(
             f"""--sql
             SELECT id, name
             FROM tags
             WHERE name LIKE ? || '|_%' {'OR name = ?' if including_tag else ''}
-        """,
+            """,
             (tag_name,) + ((tag_name,) if including_tag else ()),
         )
         return [Tag(int(id), name) for id, name in cur.fetchall()]
@@ -662,99 +339,9 @@ class DarktableLibrary:
         e.g. tag_name="foo" yields "bar"->("/img.raw", 0)
         if that photo is tagged "foo|bar" in Darktable.
         """
+
         result = defaultdict(list)
         for tag in self.get_subtags(tag_name):
             for photo in self.get_tagged_photos(tag):
                 result[tag].append(photo)
         return result
-
-
-def modify_xmp(
-    in_filename, out_fd: TextIOWrapper, changes: list[Callable[[Element, dict], None]]
-):
-    # register all namespaces
-    namespaces = dict(
-        [node for _, node in ElementTree.iterparse(in_filename, events=["start-ns"])]
-    )
-    for name, uri in namespaces.items():
-        ElementTree.register_namespace(name, uri)
-    # parse xmp file
-    tree = ElementTree.parse(in_filename)
-    root = tree.getroot()
-    # go through all "changers" which modify the xmp
-    for func in changes:
-        func(root, namespaces)
-    # write output
-    xmp_data = ElementTree.tostring(root, encoding="unicode")
-    out_fd.seek(0)
-    out_fd.truncate()
-    out_fd.write(xmp_data.encode())
-    out_fd.flush()
-
-
-def xmp_remove_borders(xmp_root, namespaces):
-    for parent in xmp_root.findall(".//darktable:history//rdf:Seq", namespaces):
-        for element in parent.findall(
-            'rdf:li[@darktable:operation="borders"]', namespaces
-        ):
-            key = f'{{{namespaces["darktable"]}}}enabled'
-            if key in element.attrib:
-                element.attrib[key] = "0"
-
-
-def sanitize_xmp(in_filename, out_fd: TextIOWrapper):
-    modify_xmp(in_filename, out_fd, changes=[xmp_remove_borders])
-
-
-def is_raw_photo_ext(ext: str) -> bool:
-    # all raw image file extensions
-    # (excluding darktable export extensions, namely tif)
-    # https://en.wikipedia.org/wiki/Raw_image_format
-    # https://docs.darktable.org/usermanual/4.0/en/special-topics/program-invocation/darktable-cli/
-    return ext.strip().lstrip(".").lower() in set(
-        [
-            "3fr",
-            "ari",
-            "arw",
-            "bay",
-            "braw",
-            "crw",
-            "cr2",
-            "cr3",
-            "cap",
-            "data",
-            "dcs",
-            "dcr",
-            "dng",
-            "drf",
-            "eip",
-            "erf",
-            "fff",
-            "gpr",
-            "iiq",
-            "k25",
-            "kdc",
-            "mdc",
-            "mef",
-            "mos",
-            "mrw",
-            "nef",
-            "nrw",
-            "obm",
-            "orf",
-            "pef",
-            "ptx",
-            "pxn",
-            "r3d",
-            "raf",
-            "raw",
-            "rwl",
-            "rw2",
-            "rwz",
-            "sr2",
-            "srf",
-            "srw",
-            "tif",
-            "x3f",
-        ]
-    ) - set(["tif"])

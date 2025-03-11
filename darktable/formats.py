@@ -115,7 +115,7 @@ class J2K(_ImgFormat):
         else:
             raise self.FormatError("Quality outside range 5-100")
 
-        if 0 <= tier <= 2:
+        if 0 <= preset <= 2:
             self.options["preset"] = preset
         else:
 
@@ -152,7 +152,7 @@ class EXR(_ImgFormat):
         else:
             raise self.FormatError("Bitdepth bpp outside posible values {16, 32}")
 
-        if 0 <= tier <= 8:
+        if 0 <= compression <= 8:
             self.options["compression"] = compression
         else:
             raise self.FormatError("Compression outside range 0-8")
@@ -204,7 +204,7 @@ class PDF(_ImgFormat):
 
         self.options["title"] = title
         if 0 <= size <= 3:
-            self.options["size"] = size_opts[size]
+            self.options["size"] = size
         else:
             raise self.FormatError("Size outside range 0-3")
 
