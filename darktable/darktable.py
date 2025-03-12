@@ -3,12 +3,17 @@ import os
 import re
 import sqlite3
 import string
+import tempfile
 from collections import defaultdict
 from enum import Enum
 from os import path
-from typing import Any
+from typing import Any, Callable
+from xml.etree.ElementTree import Element
 
 import dateutil.parser
+import exif
+import xmltodict
+from PIL import Image
 
 from darktable.util import readonly_sqlite_connection
 
@@ -78,14 +83,92 @@ class Photo(HasId):
         self.rating: int = rating
         self.color_labels: set[ColorLabel] = color_labels
 
+        self._xmp_path = None
+        self._tmp_xmp_name = None
+        self._xmp_parsed = None
+        self._history = None
+
     @property
     def xmp_path(self):
-        filename = path.basename(self.filepath)
-        filename, ext = path.splitext(filename)
-        if self.version > 0:
-            filename += "_" + f"{self.version:02}"
-        xmp_path = filename + ext + "." + "xmp"
-        return path.join(path.dirname(self.filepath), xmp_path)
+        if self._xmp_path is None:
+            filename = path.basename(self.filepath)
+            filename, ext = path.splitext(filename)
+            if self.version > 0:
+                filename += "_" + f"{self.version:02}"
+            xmp_path = filename + ext + "." + "xmp"
+
+            self._xmp_path = path.join(path.dirname(self.filepath), xmp_path)
+
+        return self._xmp_path
+
+    @property
+    def tmp_xmp_name(self):
+        if self._tmp_xmp_name is None:
+            fd, self._tmp_xmp_name = tempfile.mkstemp(suffix=".xmp")
+            os.close(fd)
+
+        return self._tmp_xmp_name
+
+    @property
+    def xmp_parsed(self):
+        if self._xmp_parsed is None:
+            with open(self.xmp_path, "rb") as xmp:
+                self._xmp_parsed = xmltodict.parse(xmp)
+
+        return self._xmp_parsed
+
+    def xmp_unparsed(self, modified_xmp):
+        """Overwrite tmp xmp with new xmp"""
+        with open(self.tmp_xmp_name, "wb") as file:
+            file.seek(0)
+            file.truncate()
+            file.write(xmltodict.unparse(modified_xmp, pretty=True).encode())
+            file.flush()
+
+    @property
+    def history(self):
+        if self._history is None:
+            self._history = self.xmp_parsed["x:xmpmeta"]["rdf:RDF"]["rdf:Description"][
+                "darktable:history"
+            ]["rdf:Seq"]["rdf:li"]
+
+        return self._history
+
+    def module_instance_enabled(self, operation: str, multi_name: str = "") -> bool:
+        """
+        Check whether a module "operation" with name "multi_name" is enabled in xmp
+        history
+
+        multi_name is optional. Defaults to empty str
+
+        Returns None if the operation/multi_name combination doesnt exist
+        Bool otherwise
+        """
+        for hist_step in reversed(self.history):
+            if (
+                hist_step["@darktable:operation"] == operation
+                and hist_step["@darktable:multi_name"] == multi_name
+            ):
+                return True if hist_step["@darktable:enabled"] == "1" else False
+
+    def module_enabled(self, operation: str) -> set:
+        """
+        Check if instances of module "operation" exist and are enabled
+
+        Return a set containing their multi_names
+        """
+        return_ = set()
+        for hist_step in self.history:
+            # For each matching operation
+            if hist_step["@darktable:operation"] == operation:
+                # Add multi_name to set if enabled
+                if hist_step["@darktable:enabled"] == "1":
+                    return_.add(hist_step["@darktable:multi_name"])
+                # And remove if disabled
+                else:
+                    return_.discard(hist_step["@darktable:multi_name"])
+
+        return return_
 
     def __repr__(self):
         return (
@@ -104,6 +187,10 @@ class Photo(HasId):
             )
             + ")"
         )
+
+    def __del__(self):
+        if self._tmp_xmp_name is not None:
+            os.unlink(self._tmp_xmp_name)
 
 
 # Not used
@@ -345,3 +432,115 @@ class DarktableLibrary:
             for photo in self.get_tagged_photos(tag):
                 result[tag].append(photo)
         return result
+
+
+def modify_metadata(filepath, exif_artist, exif_copyright):
+    """Save personal details in exif"""
+    with open(filepath, "rb") as image_file:
+        original_exif_image = exif.Image(image_file)
+
+    # remove exif data
+    image = Image.open(filepath)
+    data = list(image.getdata())
+    image_noexif = Image.new(image.mode, image.size)
+    image_noexif.putdata(data)
+    image_noexif.save(filepath)
+    image_noexif.close()
+
+    # save personal details in exif
+    with open(filepath, "rb") as image_file:
+        exif_image = exif.Image(image_file)
+    if exif_artist is not None:
+        exif_image.set("artist", exif_artist)
+    if exif_copyright is not None:
+        exif_image.set("copyright", exif_copyright)
+    exif_image.set("datetime_original", original_exif_image.get("datetime_original"))
+    with open(filepath, "wb") as image_file:
+        image_file.write(exif_image.get_file())
+
+
+def modify_xmp(in_parsed_xmp, changes: list[Callable[[Element, dict], None]]):
+    in_parsed_xmp = in_parsed_xmp.copy()
+    for func in changes:
+        func(in_parsed_xmp)
+
+    return in_parsed_xmp
+
+
+def xmp_disable_operation(in_parsed_xmp, operation: str, multi_name: str = None):
+    """
+    Disable an operation in the xmp if present.
+
+    Optionally provide a multi_name to only affect that instance
+    """
+
+    for step in in_parsed_xmp["x:xmpmeta"]["rdf:RDF"]["rdf:Description"][
+        "darktable:history"
+    ]["rdf:Seq"]["rdf:li"]:
+        # When "multi_name" is None we only care to match "operation"
+        if step["@darktable:operation"] == operation and (
+            step["@darktable:multi_name"] == multi_name or multi_name is None
+        ):
+            step["@darktable:enabled"] = "0"
+
+
+def xmp_remove_borders(in_parsed_xmp):
+    xmp_disable_operation(in_parsed_xmp, "borders", None)
+
+
+def sanitize_xmp(in_parsed_xmp):
+    return modify_xmp(in_parsed_xmp, changes=[xmp_remove_borders])
+
+
+def is_raw_photo_ext(ext: str) -> bool:
+    # all raw image file extensions
+    # (excluding darktable export extensions, namely tif)
+    # https://en.wikipedia.org/wiki/Raw_image_format
+    # https://docs.darktable.org/usermanual/4.0/en/special-topics/program-invocation/darktable-cli/
+    return ext.strip().lstrip(".").lower() in set(
+        [
+            "3fr",
+            "ari",
+            "arw",
+            "bay",
+            "braw",
+            "crw",
+            "cr2",
+            "cr3",
+            "cap",
+            "data",
+            "dcs",
+            "dcr",
+            "dng",
+            "drf",
+            "eip",
+            "erf",
+            "fff",
+            "gpr",
+            "iiq",
+            "k25",
+            "kdc",
+            "mdc",
+            "mef",
+            "mos",
+            "mrw",
+            "nef",
+            "nrw",
+            "obm",
+            "orf",
+            "pef",
+            "ptx",
+            "pxn",
+            "r3d",
+            "raf",
+            "raw",
+            "rwl",
+            "rw2",
+            "rwz",
+            "sr2",
+            "srf",
+            "srw",
+            "tif",
+            "x3f",
+        ]
+    ) - set(["tif"])

@@ -5,18 +5,14 @@ import tempfile
 from io import TextIOWrapper
 from os import PathLike, path
 from pathlib import Path, PurePosixPath
-from typing import Callable
-from xml.etree import ElementTree
-from xml.etree.ElementTree import Element
 
-import exif
 from PIL import Image
 
 from darktable import darktable, formats
 from darktable.args_hash import args_hash
 from darktable.util import Cache, filehash, fullname
 
-# TODO: move into .cache (and os dependant)
+# TODO: move into .cache dir (and os dependant)
 MODULE_DIR = path.abspath(path.dirname(__file__))
 CACHE_FILENAME = os.path.splitext(__file__)[0] + ".cache.pkl"
 
@@ -86,7 +82,7 @@ class ExportCache:
         for filepath_obj in Path(directory).glob("**/*"):
             filepath = str(filepath_obj)
             if filepath_obj.is_file() and filepath not in self._sess_exported:
-                if not is_raw_photo_ext(path.splitext(filepath)[1]):
+                if not darktable.is_raw_photo_ext(path.splitext(filepath)[1]):
                     # Remove all data associated with the photo from the cache
                     # and delete the exported photo from the directory.
                     for cache_key in self.cache_exported.keys(has_value=filepath):
@@ -99,6 +95,9 @@ class ExportCache:
                         pass
 
         self._sess_exported.clear()
+
+    def sess_add(self, item):
+        self._sess_exported.add(item)
 
 
 def export_with_cache(
@@ -182,7 +181,7 @@ def export_with_cache(
         exif_copyright,
         xmp_changes,
     )
-    cache_._sess_exported.add(export_filepath)
+    cache_.sess_add(export_filepath)
 
     cache_.cache_xmp_hashes.save(cache_key, xmp_hash)
     cache_.cache_exported.save(cache_key, exported.filepath)
@@ -278,12 +277,9 @@ def export(
             xmp_path = photo.xmp_path
             # Apply changes to xmp if needed
             if xmp_changes:
-                # TODO: move tmp file into own class
-                fd, tmp_xmp_name = tempfile.mkstemp(suffix=".xmp")
-                # with open(self.tmp_xmp_name, "wb") as tmp_xmp_file:
-                with os.fdopen(fd, "wb") as tmp_xmp_file:
-                    modify_xmp(xmp_path, tmp_xmp_file, changes=xmp_changes)
-                xmp_path = tmp_xmp_name
+                modified_xmp = darktable.modify_xmp(photo.xmp_parsed, xmp_changes)
+                photo.xmp_unparsed(modified_xmp)
+                xmp_path = photo.tmp_xmp_name
 
             return photo.filepath, xmp_path
 
@@ -351,124 +347,6 @@ def export(
 
     # Rewrite EXIF? python_exif only has support for JPG & PNG
     if not exif_artist or not exif_copyright:
-        modify_metadata(export_filepath, exif_artist, exif_copyright)
+        darktable.modify_metadata(export_filepath, exif_artist, exif_copyright)
 
-    # TODO
-    # os.unlink(tmp_xmp_name)
     return Export(photo, filepath=export_filepath)
-
-
-def modify_metadata(filepath, exif_artist, exif_copyright):
-    """Save personal details in exif"""
-    with open(filepath, "rb") as image_file:
-        original_exif_image = exif.Image(image_file)
-
-    # remove exif data
-    image = Image.open(filepath)
-    data = list(image.getdata())
-    image_noexif = Image.new(image.mode, image.size)
-    image_noexif.putdata(data)
-    image_noexif.save(filepath)
-    image_noexif.close()
-
-    # save personal details in exif
-    with open(filepath, "rb") as image_file:
-        exif_image = exif.Image(image_file)
-    if exif_artist is not None:
-        exif_image.set("artist", exif_artist)
-    if exif_copyright is not None:
-        exif_image.set("copyright", exif_copyright)
-    exif_image.set("datetime_original", original_exif_image.get("datetime_original"))
-    with open(filepath, "wb") as image_file:
-        image_file.write(exif_image.get_file())
-
-
-def modify_xmp(
-    in_filename, out_fd: TextIOWrapper, changes: list[Callable[[Element, dict], None]]
-):
-    # register all namespaces
-    namespaces = dict(
-        [node for _, node in ElementTree.iterparse(in_filename, events=["start-ns"])]
-    )
-    for name, uri in namespaces.items():
-        ElementTree.register_namespace(name, uri)
-    # parse xmp file
-    tree = ElementTree.parse(in_filename)
-    root = tree.getroot()
-    # go through all "changers" which modify the xmp
-    for func in changes:
-        func(root, namespaces)
-    # write output
-    xmp_data = ElementTree.tostring(root, encoding="unicode")
-    out_fd.seek(0)
-    out_fd.truncate()
-    out_fd.write(xmp_data.encode())
-    out_fd.flush()
-
-
-def xmp_remove_borders(xmp_root, namespaces):
-    for parent in xmp_root.findall(".//darktable:history//rdf:Seq", namespaces):
-        for element in parent.findall(
-            'rdf:li[@darktable:operation="borders"]', namespaces
-        ):
-            key = f'{{{namespaces["darktable"]}}}enabled'
-            if key in element.attrib:
-                element.attrib[key] = "0"
-
-
-def sanitize_xmp(in_filename, out_fd: TextIOWrapper):
-    modify_xmp(in_filename, out_fd, changes=[xmp_remove_borders])
-
-
-def is_raw_photo_ext(ext: str) -> bool:
-    # all raw image file extensions
-    # (excluding darktable export extensions, namely tif)
-    # https://en.wikipedia.org/wiki/Raw_image_format
-    # https://docs.darktable.org/usermanual/4.0/en/special-topics/program-invocation/darktable-cli/
-    return ext.strip().lstrip(".").lower() in set(
-        [
-            "3fr",
-            "ari",
-            "arw",
-            "bay",
-            "braw",
-            "crw",
-            "cr2",
-            "cr3",
-            "cap",
-            "data",
-            "dcs",
-            "dcr",
-            "dng",
-            "drf",
-            "eip",
-            "erf",
-            "fff",
-            "gpr",
-            "iiq",
-            "k25",
-            "kdc",
-            "mdc",
-            "mef",
-            "mos",
-            "mrw",
-            "nef",
-            "nrw",
-            "obm",
-            "orf",
-            "pef",
-            "ptx",
-            "pxn",
-            "r3d",
-            "raf",
-            "raw",
-            "rwl",
-            "rw2",
-            "rwz",
-            "sr2",
-            "srf",
-            "srw",
-            "tif",
-            "x3f",
-        ]
-    ) - set(["tif"])

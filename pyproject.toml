@@ -30,7 +30,8 @@ dependencies = [
 	"plum-py == 0.8.7",
 	"python-dateutil == 2.9.0.post0",
 	"simple_cache == 0.35",
-	"six == 1.16.0"
+	"six == 1.16.0",
+    "xmltodict == 0.14.2"
 ]
 
 [project.optional-dependencies]
