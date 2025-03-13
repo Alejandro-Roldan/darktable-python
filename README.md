@@ -2,8 +2,11 @@
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
 > This is a fork from [ungive/darktable-python](https://github.com/ungive/darktable-python)
+>
 > It extends the project to cover the cli arguments that were missing
-> extracts more info from the db of photos
+>
+> Extracts more info from the db of photos
+>
 > And I made some changes to the code structure that makes it non-backwards-compatible
 
 The aim of this project is the following:
@@ -18,25 +21,23 @@ The aim of this project is the following:
 ## Setup
 
 ```sh
-git clone https://github.com/ungive/darktable-python
+git clone https://github.com/Alejandro-Roldan/darktable-python
 python -m pip install ./darktable-python
 ```
 
 
-## Usage
+## Simple Example
 
 ```python
 from darktable import darktable, exporter, formats
 
+CLI_BIN = "/usr/bin/darktable-cli"
+CONFIG_DIR = "$HOME/.config/darktable/"
+OUT_DIR = "$HOME/Pictures/"
+
 CM_INCH = 0.394
 
-CLI_BIN = "/usr/bin/darktable-cli"
-OUT_DIR = "$HOME/Pictures/"
-CONFIG_DIR = "$HOME/.config/darktable/"
-
-def remove_exposure(in_parsed_xmp):
-    darktable.xmp_disable_operation(in_parsed_xmp, "exposure", None)
-
+# A bit extra
 dpi = 300
 max_width_cm = 15
 max_height_cm = 15
@@ -47,23 +48,26 @@ jxl_format = formats.JXL(
     bpp=16, pixel_type=False, quality=100, original=False, effort=7, tier=0
 )
 cache_ = exporter.ExportCache("example")
-# An example using all possible options
+# An example splicitly defining all possible options
 jxl_exporter_options = {
     "cli_bin": CLI_BIN,
     "config_dir": CONFIG_DIR,
     "filename_format": "$(FILE.NAME)",
     "format_options": jxl_format,
+    # Optinal arguments
     "width": max_width,
     "height": max_height,
     "hq_resampling": 0,
     "upscale": False,
-    "style": "Frame 5%",
-    "style_overwrite": True,
+    # The name of a style that exists in your darktable
+    "style": "example",
+    "style_overwrite": False,
     "apply_custom_presets": True,
     "icc_type": formats.OutputColorProfile.ADOBERGB,
     "icc_file": "",
     "icc_intent": formats.RenderingIntent.PERCEPTUAL,
     "debug": True,
+    # Defining this will only work for jpgs or pngs
     "exif_artist": None,
     "exif_copyright": None,
     "xmp_changes": [remove_exposure],
@@ -81,6 +85,10 @@ for_print_photo_list = [
 # Loop and export
 for photo in for_print_photo_list:
     exporter.export_with_cache(cache_, photo, OUT_DIR, **jxl_exporter_options)
+
+def remove_exposure(in_parsed_xmp):
+    # Disables all instances of exposure module
+    darktable.xmp_disable_operation(in_parsed_xmp, "exposure", None)
 ```
 
 
@@ -104,6 +112,7 @@ https://github.com/darktable-org/darktable/issues/15330
 ## Documentation
 
 `export()`
+```
 Exports a photo to a directory through Darktable's CLI interface.
 Returns a copy of the photo instance where export_filepath is set.
 
@@ -162,13 +171,14 @@ Returns a copy of the photo instance where export_filepath is set.
 More info on the darktable-cli arguments:
 https://docs.darktable.org/usermanual/4.0/en/special-topics/program-invocation/darktable-cli
 https://docs.darktable.org/usermanual/4.0/en/special-topics/program-invocation/darktable
-
+```
 
 `export_with_cache()`
+```
 Exports a photo to a directory through Darktable's CLI interface, but only if there are
 changes to the XMP or it hasn't been exported yet.
 
 Same arguments with the added neccessary argument:
     cache_: ExportCache     the ExportCache instance to use
-
+```
 

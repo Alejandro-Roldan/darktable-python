@@ -1,26 +1,21 @@
 # pyproject.toml
 
 [build-system]
-# Or others
 requires = ["setuptools >= 64"]
 build-backend = "setuptools.build_meta"
 
 [project]
-# Required static
 name = "darktable-python"
-
-# Can be made dynamic with
-#   dynamic = ["version", dependencies", ...]
-# And then the definition its build-system specific
-version = "0.5.0"
+version = "0.5.1"
 description = ""
 readme = {file = "README.md", content-type = "text/markdown"}
 license = {file = "LICENSE"}
 authors = [
   {name = "Jonas van den Berg"},
+  {name = "Alejandro Roldán", email = "alej_roldan@disr.it"}
 ]
 maintainers = [
-  {name = "Jonas van den Berg"},
+  {name = "Alejandro Roldán", email = "alej_roldan@disr.it"}
 ]
 
 requires-python = ">=3.12"
@@ -31,7 +26,7 @@ dependencies = [
 	"python-dateutil == 2.9.0.post0",
 	"simple_cache == 0.35",
 	"six == 1.16.0",
-    "xmltodict == 0.14.2"
+	"xmltodict == 0.14.2"
 ]
 
 [project.optional-dependencies]
@@ -48,8 +43,8 @@ dev = [
 darktable_db_inconsistencies = "database_inconsistencies:main"
 
 [project.urls]
-Homepage = "https://github.com/ungive/darktable-python"
-Repository = "https://github.com/ungive/darktable-python"
+Homepage = "https://github.com/Alejandro-Roldan/darktable-python"
+Repository = "https://github.com/Alejandro-Roldan/darktable-python"
 
 [tool.black]
 line-length = 88
