@@ -8,7 +8,6 @@ from collections import defaultdict
 from enum import Enum
 from os import path
 from typing import Any, Callable
-from xml.etree.ElementTree import Element
 
 import dateutil.parser
 import exif
@@ -67,21 +66,31 @@ class Photo(HasId):
         filepath,
         version,
         datetime_taken: datetime.datetime,
-        tags: dict[Tag, Position],
+        flags: int,
         film_roll: FilmRoll,
         position: Position,
-        rating: int,
+        tags: dict[Tag, Position],
         color_labels: set[ColorLabel],
     ):
         self.id: int = id
         self.filepath: str = os.path.normpath(filepath)
         self.version: int = version
         self.datetime_taken: datetime.datetime = datetime_taken
-        self.tags: dict[Tag, Position] = tags
+        flags: int = flags
         self.film_roll: FilmRoll = film_roll
         self.position: Position = position
-        self.rating: int = rating
+        self.tags: dict[Tag, Position] = tags
         self.color_labels: set[ColorLabel] = color_labels
+
+        # extracting ratings from image flags with mask 0x7:
+        # https://github.com/darktable-org/darktable/blob/0f5bd178/src/common/ratings.c#L52
+        # https://github.com/darktable-org/darktable/blob/0f5bd178/src/common/ratings.h#L26
+        self.rating: int = flags & 0x7
+        # And all the rest of flag values are defined in
+        # https://github.com/darktable-org/darktable/blob/master/src/common/image.h#L53
+        self.rejected: bool = bool(flags & 0x8)
+        self.monochrome: bool = bool(flags & (1 << 15 | 1 << 19 | 1 << 20))
+        self.color: bool = not self.monochrome
 
         self._xmp_path = None
         self._tmp_xmp_name = None
@@ -112,8 +121,11 @@ class Photo(HasId):
     @property
     def xmp_parsed(self):
         if self._xmp_parsed is None:
-            with open(self.xmp_path, "rb") as xmp:
-                self._xmp_parsed = xmltodict.parse(xmp)
+            try:
+                with open(self.xmp_path, "rb") as xmp:
+                    self._xmp_parsed = xmltodict.parse(xmp)
+            except FileNotFoundError:
+                self._xmp_parsed = {}
 
         return self._xmp_parsed
 
@@ -128,9 +140,14 @@ class Photo(HasId):
     @property
     def history(self):
         if self._history is None:
-            self._history = self.xmp_parsed["x:xmpmeta"]["rdf:RDF"]["rdf:Description"][
-                "darktable:history"
-            ]["rdf:Seq"]["rdf:li"]
+            try:
+                self._history = self.xmp_parsed["x:xmpmeta"]["rdf:RDF"][
+                    "rdf:Description"
+                ]["darktable:history"]["rdf:Seq"]["rdf:li"]
+            # KeyError: no xmp for this file
+            # TypeError: no history in xmp file
+            except (KeyError, TypeError):
+                self._history = {}
 
         return self._history
 
@@ -247,6 +264,7 @@ def parse_darktable_datetime(datetime_taken: int):
     value = datetime_taken / 1000 / 1000
     value = max(value, epoch_delta.total_seconds())
     value_corrected = value - epoch_delta.total_seconds()
+
     return datetime.datetime.fromtimestamp(value_corrected, datetime.timezone.utc)
 
 
@@ -306,6 +324,9 @@ class DarktableLibrary:
             datetime_taken=parse_darktable_datetime(
                 row["datetime_taken"] if isinstance(row["datetime_taken"], int) else 0
             ),
+            flags=row["flags"],
+            film_roll=FilmRoll(int(row["film_id"]), row["film_directory"]),
+            position=int(row["film_position"]),
             tags={
                 Tag(int(tag_id), tag_name): int(tag_position)
                 for tag_id, tag_name, tag_position in zip(
@@ -314,9 +335,6 @@ class DarktableLibrary:
                     row["tag_positions"].split(separator),
                 )
             },
-            film_roll=FilmRoll(int(row["film_id"]), row["film_directory"]),
-            position=int(row["film_position"]),
-            rating=row["rating"],
             color_labels=(
                 set(
                     ColorLabel(int(color_label))
@@ -332,9 +350,6 @@ class DarktableLibrary:
     ) -> list[Photo]:
         cur = self.library_conn.cursor()
         separator = "#~~~#"
-        # extracting ratings from image flags with mask 0x7:
-        # https://github.com/darktable-org/darktable/blob/0f5bd178/src/common/ratings.c#L52
-        # https://github.com/darktable-org/darktable/blob/0f5bd178/src/common/ratings.h#L26
         with AttachedDatabase(cur, "data", self.data_dbpath):
             cur.execute(
                 f"""--sql
@@ -343,7 +358,7 @@ class DarktableLibrary:
                     rtrim(film_rolls.folder, '/') || '/' || images.filename AS filepath,
                     images.version,
                     images.datetime_taken,
-                    images.flags & 0x7 as rating,
+                    images.flags,
                     film_rolls.id AS film_id,
                     film_rolls.folder AS film_directory,
                     images.position AS film_position,
@@ -364,7 +379,8 @@ class DarktableLibrary:
                 (separator, separator, separator, separator) + args,
             )
             result = cur.fetchall()
-            return [self._row_to_photo(row, separator=separator) for row in result]
+
+        return [self._row_to_photo(row, separator=separator) for row in result]
 
     def get_photos(self) -> list[Photo]:
         return self._select_photos()
@@ -377,6 +393,7 @@ class DarktableLibrary:
             (id, tag.id),
             limit=1,
         )
+
         return photos[0] if len(photos) > 0 else None
 
     def get_tag(self, tag_name) -> Tag:
@@ -391,6 +408,7 @@ class DarktableLibrary:
             (tag_name,),
         )
         id, name = cur.fetchone()
+
         return Tag(int(id), name)
 
     def get_tagged_photos(self, tag: Tag) -> list[Photo]:
@@ -459,7 +477,7 @@ def modify_metadata(filepath, exif_artist, exif_copyright):
         image_file.write(exif_image.get_file())
 
 
-def modify_xmp(in_parsed_xmp, changes: list[Callable[[Element, dict], None]]):
+def modify_xmp(in_parsed_xmp, changes: list[Callable[[dict], None]]):
     in_parsed_xmp = in_parsed_xmp.copy()
     for func in changes:
         func(in_parsed_xmp)

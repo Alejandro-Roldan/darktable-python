@@ -3,6 +3,7 @@
 
 > This is a fork from [ungive/darktable-python](https://github.com/ungive/darktable-python)
 > It extends the project to cover the cli arguments that were missing
+> extracts more info from the db of photos
 > And I made some changes to the code structure that makes it non-backwards-compatible
 
 The aim of this project is the following:
@@ -33,6 +34,8 @@ CLI_BIN = "/usr/bin/darktable-cli"
 OUT_DIR = "$HOME/Pictures/"
 CONFIG_DIR = "$HOME/.config/darktable/"
 
+def remove_exposure(in_parsed_xmp):
+    darktable.xmp_disable_operation(in_parsed_xmp, "exposure", None)
 
 dpi = 300
 max_width_cm = 15
@@ -63,7 +66,7 @@ jxl_exporter_options = {
     "debug": True,
     "exif_artist": None,
     "exif_copyright": None,
-    "xmp_changes": [],
+    "xmp_changes": [remove_exposure],
 }
 
 # Open darktable library
@@ -167,3 +170,5 @@ changes to the XMP or it hasn't been exported yet.
 
 Same arguments with the added neccessary argument:
     cache_: ExportCache     the ExportCache instance to use
+
+

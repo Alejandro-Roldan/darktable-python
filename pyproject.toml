@@ -12,7 +12,7 @@ name = "darktable-python"
 # Can be made dynamic with
 #   dynamic = ["version", dependencies", ...]
 # And then the definition its build-system specific
-version = "0.0.1a"
+version = "0.5.0"
 description = ""
 readme = {file = "README.md", content-type = "text/markdown"}
 license = {file = "LICENSE"}

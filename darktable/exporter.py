@@ -143,7 +143,7 @@ def export_with_cache(
         height=str(height),
         xmp_changes=str([fullname(func) for func in xmp_changes]),
     )
-    # I think this part needs to be removed or kinda reworked
+    # TODO: I think this part needs to be removed or kinda reworked
     if args_hash_ != cache_.cache.load("args_hash"):
         cache_.cache_xmp_hashes.prune()
         cache_.cache_exported.prune()
@@ -272,7 +272,6 @@ def export(
     """
 
     def _generate_input_filelist():
-        # TODO convert any path to pure posix paths (since that's required here)
         if isinstance(photo, darktable.Photo):
             xmp_path = photo.xmp_path
             # Apply changes to xmp if needed
@@ -286,6 +285,7 @@ def export(
         return photo, ""
 
     def _generate_command():
+        # TODO convert any path to pure posix paths (since that's required here)
         command = [
             cli_bin,
             photo_filepath,
@@ -346,7 +346,7 @@ def export(
     export_filepath = match.groups()[0]
 
     # Rewrite EXIF? python_exif only has support for JPG & PNG
-    if not exif_artist or not exif_copyright:
+    if exif_artist or exif_copyright:
         darktable.modify_metadata(export_filepath, exif_artist, exif_copyright)
 
     return Export(photo, filepath=export_filepath)
