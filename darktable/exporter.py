@@ -1,9 +1,11 @@
-import os
 import re
 import subprocess
 import tempfile
+from errno import ENOENT
 from io import TextIOWrapper
 from os import PathLike, path
+from os import remove as os_remove
+from os import strerror
 from pathlib import Path, PurePosixPath
 
 from PIL import Image
@@ -11,10 +13,6 @@ from PIL import Image
 from darktable import darktable, formats
 from darktable.args_hash import args_hash
 from darktable.util import Cache, filehash, fullname
-
-# TODO: move into .cache dir (and os dependant)
-MODULE_DIR = path.abspath(path.dirname(__file__))
-CACHE_FILENAME = os.path.splitext(__file__)[0] + ".cache.pkl"
 
 
 class Export:
@@ -57,17 +55,17 @@ class Export:
 
 
 class ExportCache:
-    def __init__(self, cache_key):
+    def __init__(self, cache_key: str, dir_: str | PathLike, filename: str = ""):
+        cache_filename = filename + ".cache.pkl"
+
         # Create caches
-        self.cache = Cache(
-            path.join(MODULE_DIR, CACHE_FILENAME), prefix=f"{cache_key}:main:"
-        )
+        self.cache = Cache(path.join(dir_, cache_filename), prefix=f"{cache_key}:main:")
         # I think this are only for this session
         self.cache_xmp_hashes = Cache(
-            path.join(MODULE_DIR, CACHE_FILENAME), prefix=f"{cache_key}:xmp:"
+            path.join(dir_, cache_filename), prefix=f"{cache_key}:xmp:"
         )
         self.cache_exported = Cache(
-            path.join(MODULE_DIR, CACHE_FILENAME), prefix=f"{cache_key}:export:"
+            path.join(dir_, cache_filename), prefix=f"{cache_key}:export:"
         )
 
         self._sess_exported = set()
@@ -90,7 +88,7 @@ class ExportCache:
                         self.cache_exported.delete(cache_key)
                         self.cache_xmp_hashes.delete(cache_key)
                     try:
-                        os.remove(filepath)
+                        os_remove(filepath)
                     except Exception:
                         pass
 
@@ -103,8 +101,8 @@ class ExportCache:
 def export_with_cache(
     cache_: ExportCache,
     # Same arguments as export()
-    photo: str | os.PathLike | darktable.Photo,
-    out_dir: str | os.PathLike,
+    photo: str | PathLike | darktable.Photo,
+    out_dir: str | PathLike,
     cli_bin: str | PathLike,
     config_dir: str | PathLike,
     filename_format: str,
@@ -143,13 +141,12 @@ def export_with_cache(
         height=str(height),
         xmp_changes=str([fullname(func) for func in xmp_changes]),
     )
-    # TODO: I think this part needs to be removed or kinda reworked
+    # TODO: I think this part needs to be reworked but i dont fully understand it
     if args_hash_ != cache_.cache.load("args_hash"):
         cache_.cache_xmp_hashes.prune()
         cache_.cache_exported.prune()
     cache_.cache.save("args_hash", args_hash_)
 
-    # TODO hash the class instead and return this identifier
     cache_key = f"{photo.filepath}:{photo.version}"
 
     xmp_hash = filehash(photo.xmp_path)
@@ -190,8 +187,8 @@ def export_with_cache(
 
 
 def export(
-    photo: str | os.PathLike | darktable.Photo,
-    out_dir: str | os.PathLike,
+    photo: str | PathLike | darktable.Photo,
+    out_dir: str | PathLike,
     cli_bin: str | PathLike,
     config_dir: str | PathLike,
     filename_format: str,
@@ -251,7 +248,7 @@ def export(
 
         icc_type: formats.OutputColorProfile    ICC profile. Defaults to NONE
 
-        icc_file: str | PathLike            ICC file. Defaults to empty str
+        icc_file: str | os.PathLike         ICC file. Defaults to empty str
 
         icc_intent: formats.RenderingIntent Rendering Intent (when using LittleCMS2).
                                             Defaults to IMAGE_SETTINGS
@@ -280,17 +277,16 @@ def export(
                 photo.xmp_unparsed(modified_xmp)
                 xmp_path = photo.tmp_xmp_name
 
-            return photo.filepath, xmp_path
+            return PurePosixPath(photo.filepath), PurePosixPath(xmp_path)
 
         return photo, ""
 
     def _generate_command():
-        # TODO convert any path to pure posix paths (since that's required here)
         command = [
-            cli_bin,
-            photo_filepath,
-            xmp_path,
-            out_path,
+            str(cli_bin),
+            str(photo_filepath),
+            str(xmp_path),
+            str(out_path),
             "--width",
             str(width),
             "--height",
@@ -308,8 +304,8 @@ def export(
             str(format_options.ext),
             "--icc-type",
             str(icc_type.name),
-            "--icc-file" if os.path.exists(icc_file) else "",
-            str(icc_file) if os.path.exists(icc_file) else "",
+            "--icc-file" if icc_file else "",
+            str(icc_file),
             "--icc-intent" if icc_intent.name != "IMAGE_SETTINGS" else "",
             str(icc_intent.name) if icc_intent.name != "IMAGE_SETTINGS" else "",
             "--verbose" if debug else "",
@@ -323,9 +319,16 @@ def export(
         # Remove empty strs from the command (NEEDED)
         return [x for x in command if x]
 
-    out_path = str(PurePosixPath(out_dir, filename_format))
-
+    # Convert paths to PurePosixPaths (is it needed? what happens in non posix systems)
+    cli_bin = PurePosixPath(cli_bin)
+    out_path = PurePosixPath(out_dir, filename_format)
+    if icc_file:
+        if not path.isfile(icc_file):
+            raise FileNotFoundError(ENOENT, strerror(ENOENT), icc_file)
+        icc_file = PurePosixPath(icc_file)
+    config_dir = PurePosixPath(config_dir)
     photo_filepath, xmp_path = _generate_input_filelist()
+
     command = _generate_command()
 
     if debug:

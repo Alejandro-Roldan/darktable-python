@@ -1,12 +1,11 @@
 import datetime
-import os
 import re
 import sqlite3
 import string
 import tempfile
 from collections import defaultdict
 from enum import Enum
-from os import path
+from os import close, path, unlink
 from typing import Any, Callable
 
 import dateutil.parser
@@ -73,7 +72,7 @@ class Photo(HasId):
         color_labels: set[ColorLabel],
     ):
         self.id: int = id
-        self.filepath: str = os.path.normpath(filepath)
+        self.filepath: str = path.normpath(filepath)
         self.version: int = version
         self.datetime_taken: datetime.datetime = datetime_taken
         flags: int = flags
@@ -114,7 +113,7 @@ class Photo(HasId):
     def tmp_xmp_name(self):
         if self._tmp_xmp_name is None:
             fd, self._tmp_xmp_name = tempfile.mkstemp(suffix=".xmp")
-            os.close(fd)
+            close(fd)
 
         return self._tmp_xmp_name
 
@@ -206,11 +205,14 @@ class Photo(HasId):
         )
 
     def __del__(self):
-        if self._tmp_xmp_name is not None:
-            os.unlink(self._tmp_xmp_name)
+        try:
+            if self._tmp_xmp_name is not None:
+                unlink(self._tmp_xmp_name)
+        except FileNotFoundError:
+            pass
 
 
-# Not used
+# TODO: seems unfinished and i dont understand the idea
 class FilenameFormat:
     """Implements a Darktable format string for export filenames.
     Only supports a subset of variables as not all are used here.
@@ -296,10 +298,20 @@ class DarktableLibrary:
     DATA_DB = "data.db"
     LIBRARY_DB = "library.db"
 
-    def __init__(self, config_dir):
+    def __init__(self, config_dir, library_dbpath=None, data_dbpath=None):
         self.config_dir = config_dir
-        self.data_dbpath = path.join(config_dir, self.DATA_DB)
-        self.library_dbpath = path.join(config_dir, self.LIBRARY_DB)
+        if library_dbpath:
+            if not path.exists(library_dbpath):
+                raise IOError("library path doesn't exist")
+            self.library_dbpath = library_dbpath
+        else:
+            self.library_dbpath = path.join(config_dir, self.LIBRARY_DB)
+        if data_dbpath:
+            if not path.exists(data_dbpath):
+                raise IOError("data path doesn't exist")
+            self.data_dbpath = data_dbpath
+        else:
+            self.data_dbpath = path.join(config_dir, self.DATA_DB)
         self.data_conn = readonly_sqlite_connection(self.data_dbpath)
         self.library_conn = readonly_sqlite_connection(self.library_dbpath)
 
