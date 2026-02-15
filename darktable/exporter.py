@@ -15,6 +15,10 @@ from darktable.args_hash import args_hash
 from darktable.util import Cache, filehash, fullname
 
 
+class ExportError(Exception):
+    pass
+
+
 class Export:
     def __init__(self, photo: darktable.Photo, filepath: str):
         self.photo: darktable.Photo = photo
@@ -344,7 +348,7 @@ def export(
     # extract the exported filename
     match = re.search(r"exported to `([^\']+)\'", result.stdout)
     if not match:
-        raise RuntimeError("expected darktable-cli output to contain filename")
+        raise ExportError("expected darktable-cli output to contain filename")
 
     export_filepath = match.groups()[0]
 
