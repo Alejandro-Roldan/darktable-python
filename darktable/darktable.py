@@ -59,6 +59,7 @@ class ColorLabel(Enum):
 
 
 class Photo(HasId):
+    # TODO: add missing fields
     def __init__(
         self,
         id,
@@ -202,7 +203,8 @@ class Photo(HasId):
 
         # Loop through tags to regex match the str_ tag
         for tag in self.tags:
-            if ignore_dt_tags and re.match("darktable", tag.name) is not None:
+            # if ignore_dt_tags and re.match("darktable", tag.name) is not None:
+            if ignore_dt_tags and tag.name.startswith("darktable|"):
                 continue
             if re.search(rf"(?:^|\|)({str_})(?:$|\|)", tag.name, flags=flags):
                 return True
@@ -352,6 +354,7 @@ class DarktableLibrary:
         self.library_conn.close()
 
     def _row_to_photo(self, row: sqlite3.Row, separator: str) -> Photo:
+        # TODO: add missing fields
         return Photo(
             id=int(row["id"]),
             filepath=row["filepath"],
@@ -389,11 +392,8 @@ class DarktableLibrary:
             cur.execute(
                 f"""--sql
                 SELECT
-                    images.id,
+                    images.*,
                     rtrim(film_rolls.folder, '/') || '/' || images.filename AS filepath,
-                    images.version,
-                    images.datetime_taken,
-                    images.flags,
                     film_rolls.id AS film_id,
                     film_rolls.folder AS film_directory,
                     images.position AS film_position,
@@ -485,6 +485,16 @@ class DarktableLibrary:
             for photo in self.get_tagged_photos(tag):
                 result[tag].append(photo)
         return result
+
+    def get_photos_color_labeled(self, color: ColorLabel) -> list[Photo]:
+        """Get photos marked with "color" color label"""
+
+        return self._select_photos(
+            """--sql
+            WHERE color_labels.color == ?
+            """,
+            (str(color.value),),
+        )
 
 
 def modify_metadata(filepath, exif_artist, exif_copyright):
