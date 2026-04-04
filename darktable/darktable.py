@@ -186,6 +186,29 @@ class Photo(HasId):
 
         return return_
 
+    def has_tag(self, str_, ignore_case=True, ignore_dt_tags=False):
+        """Check if a photo has a tag
+
+        Arguments:
+            ignore_case: case insensitive matching. Default: True
+            ignore_dt_tags: ignore daktable default tags. Default: False
+
+        Returns:
+            Bool value
+        """
+        # Replace "|" in str_ with "\|" so regex correctly interprets as literal "|"
+        str_ = str_.replace("|", "\\|")
+        flags = re.IGNORECASE if ignore_case else re.NOFLAG
+
+        # Loop through tags to regex match the str_ tag
+        for tag in self.tags:
+            if ignore_dt_tags and re.match("darktable", tag.name) is not None:
+                continue
+            if re.search(rf"(?:^|\|)({str_})(?:$|\|)", tag.name, flags=flags):
+                return True
+
+        return False
+
     def __repr__(self):
         return (
             self.__class__.__name__

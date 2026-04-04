@@ -153,7 +153,11 @@ def export_with_cache(
 
     cache_key = f"{photo.filepath}:{photo.version}"
 
-    xmp_hash = filehash(photo.xmp_path)
+    try:
+        xmp_hash = filehash(photo.xmp_path)
+    # TODO: unhappy now this is handled
+    except FileNotFoundError:
+        raise ExportError(f"Reference file not found '{photo.xmp_path}'")
     export_filepath = cache_.cache_exported.load(cache_key)
     if export_filepath is not None and path.exists(export_filepath):
         cache_._sess_exported.add(export_filepath)
@@ -347,8 +351,14 @@ def export(
 
     # extract the exported filename
     match = re.search(r"exported to `([^\']+)\'", result.stdout)
-    if not match:
+    skip = re.search(
+        r"skipping \(not modified since export\) `([^\']+)\'", result.stdout
+    )
+    if not match and not skip:
         raise ExportError("expected darktable-cli output to contain filename")
+    if skip:
+        export_filepath = skip.groups()[0]
+        return Export(photo, filepath=export_filepath)
 
     export_filepath = match.groups()[0]
 
