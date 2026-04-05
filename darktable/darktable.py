@@ -18,6 +18,10 @@ from darktable.util import readonly_sqlite_connection
 Position = int
 
 
+class TagDoesntExistError(Exception):
+    pass
+
+
 class HasId:
     id: int
 
@@ -71,6 +75,9 @@ class Photo(HasId):
         position: Position,
         tags: dict[Tag, Position],
         color_labels: set[ColorLabel],
+        output_width: int,
+        output_height: int,
+        aspect_ratio: float,
     ):
         self.id: int = id
         self.filepath: str = path.normpath(filepath)
@@ -81,6 +88,9 @@ class Photo(HasId):
         self.position: Position = position
         self.tags: dict[Tag, Position] = tags
         self.color_labels: set[ColorLabel] = color_labels
+        self.output_width: int = output_width
+        self.output_height: int = output_height
+        self.aspect_ratio: float = aspect_ratio
 
         # extracting ratings from image flags with mask 0x7:
         # https://github.com/darktable-org/darktable/blob/0f5bd178/src/common/ratings.c#L52
@@ -381,6 +391,9 @@ class DarktableLibrary:
                 if row["color_label"] is not None
                 else set()
             ),
+            output_width=row["output_width"],
+            output_height=row["output_height"],
+            aspect_ratio=row["aspect_ratio"],
         )
 
     def _select_photos(
@@ -442,15 +455,25 @@ class DarktableLibrary:
             """,
             (tag_name,),
         )
-        id, name = cur.fetchone()
+        try:
+            id, name = cur.fetchone()
+        # No matching tag
+        except TypeError:
+            raise TagDoesntExistError
 
         return Tag(int(id), name)
 
-    def get_tagged_photos(self, tag: Tag) -> list[Photo]:
+    def get_tagged_photos(self, tag: Tag, include_dt_tags: bool = False) -> list[Photo]:
+        # Whether to include search in darktable default tags
+        include_dt_tags = (
+            "AND LOWER(data.tags.name) NOT LIKE 'darktable%'"
+            if not include_dt_tags
+            else ""
+        )
         return self._select_photos(
-            """--sql
-            WHERE tagged_images.tagid=? AND LOWER(data.tags.name) NOT LIKE 'darktable%'
-            """,
+            (f"""--sql
+                WHERE tagged_images.tagid=? {include_dt_tags}
+                """),
             (tag.id,),
         )
 
