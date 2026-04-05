@@ -397,7 +397,7 @@ class DarktableLibrary:
         )
 
     def _select_photos(
-        self, where_clause: str = "", args: tuple = (), limit: int = None
+        self, where_clause: str = "", bindings: tuple = (), limit: int = None
     ) -> list[Photo]:
         cur = self.library_conn.cursor()
         separator = "#~~~#"
@@ -424,7 +424,7 @@ class DarktableLibrary:
                 GROUP BY images.id
                 {f'LIMIT {limit}' if limit is not None and limit >= 0 else ''}
                 """,
-                (separator, separator, separator, separator) + args,
+                (separator, separator, separator, separator) + bindings,
             )
             result = cur.fetchall()
 
