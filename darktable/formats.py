@@ -323,6 +323,14 @@ class TIFF(_ImgFormat):
 
         self.options["shortfile"] = shortfile
 
+    def configuration_listed(self):
+        # for configuration it needs "tiff" in the argument
+        self.ext = "tiff"
+        conf = super().configuration_listed()
+        self.ext = "tif"
+
+        return conf
+
 
 # https://docs.darktable.org/usermanual/development/en/special-topics/program-invocation/darktable-cli/#webp
 class WEBP(_ImgFormat):
