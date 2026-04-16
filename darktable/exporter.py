@@ -15,6 +15,10 @@ from darktable.args_hash import args_hash
 from darktable.util import Cache, filehash, fullname
 
 
+class CommandError(Exception):
+    pass
+
+
 class ExportError(Exception):
     pass
 
@@ -125,6 +129,7 @@ def export_with_cache(
     exif_artist: str = None,
     exif_copyright: str = None,
     xmp_changes: list = [],
+    on_conflict_action: formats.OnConflictActions = None,
 ) -> Export:
     """Exports a photo to a directory through Darktable's CLI interface,
     but only if there are changes to the XMP or it hasn't been exported yet.
@@ -185,6 +190,7 @@ def export_with_cache(
         exif_artist,
         exif_copyright,
         xmp_changes,
+        on_conflict_action,
     )
     cache_.sess_add(export_filepath)
 
@@ -215,6 +221,7 @@ def export(
     exif_artist: str = None,
     exif_copyright: str = None,
     xmp_changes: list = [],
+    on_conflict_action: formats.OnConflictActions = None,
 ) -> Export:
     """Exports a photo to a directory through Darktable's CLI interface.
     Returns a copy of the photo instance where export_filepath is set.
@@ -271,6 +278,9 @@ def export(
                                             image export. Only applied if calling export
                                             with a Photo object
 
+        on_conflict_action: formats.OnConflictActions
+                                            What to do if file already exists
+
     More info on the darktable-cli arguments:
     https://docs.darktable.org/usermanual/4.0/en/special-topics/program-invocation/darktable-cli
     https://docs.darktable.org/usermanual/4.0/en/special-topics/program-invocation/darktable
@@ -322,8 +332,20 @@ def export(
             "--configdir",
             str(config_dir),
         ]
+
+        # Add options on conflict handling
+        if isinstance(on_conflict_action, formats.OnConflictActions):
+            command += on_conflict_action.conf()
+        # Continue normally if None and raise error if unexpected type
+        elif on_conflict_action is not None:
+            raise CommandError(
+                "on_conflict_action is not expected type "
+                f'"{formats.OnConflictActions.__name__}"'
+            )
+
         # Add format options to the command
         command += format_options.configuration_listed()
+
         # Remove empty strs from the command (NEEDED)
         return [x for x in command if x]
 
