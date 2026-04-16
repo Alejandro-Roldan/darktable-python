@@ -51,6 +51,21 @@ class RenderingIntent(Enum):
     ABSOLUTE_COLORIMETRIC = 4
 
 
+class OnConflictActions(Enum):
+    """https://github.com/darktable-org/darktable/blob/master/src/imageio/storage/disk.c#L52
+
+    This may change if upstream adds an "on conflict" cli option
+    """
+
+    UNIQUE_FILENAME = 0
+    OVERWRITE = 1
+    OVERWRITE_IF_CHANGED = 2
+    SKIP = 3
+
+    def conf(self):
+        return ["--conf", f"plugins/imageio/storage/disk/overwrite={self.value}"]
+
+
 class _ImgFormat:
     def __init__(self):
         self.options = {}
@@ -322,6 +337,14 @@ class TIFF(_ImgFormat):
             raise self.FormatError("Compresslevel outside range 0-9")
 
         self.options["shortfile"] = shortfile
+
+    def configuration_listed(self):
+        # for configuration it needs "tiff" in the argument
+        self.ext = "tiff"
+        conf = super().configuration_listed()
+        self.ext = "tif"
+
+        return conf
 
 
 # https://docs.darktable.org/usermanual/development/en/special-topics/program-invocation/darktable-cli/#webp

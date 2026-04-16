@@ -1,12 +1,11 @@
 import datetime
-import os
 import re
 import sqlite3
 import string
 import tempfile
 from collections import defaultdict
 from enum import Enum
-from os import path
+from os import close, path, unlink
 from typing import Any, Callable
 
 import dateutil.parser
@@ -17,6 +16,10 @@ from PIL import Image
 from darktable.util import readonly_sqlite_connection
 
 Position = int
+
+
+class TagDoesntExistError(Exception):
+    pass
 
 
 class HasId:
@@ -60,6 +63,7 @@ class ColorLabel(Enum):
 
 
 class Photo(HasId):
+    # TODO: add missing fields
     def __init__(
         self,
         id,
@@ -71,9 +75,12 @@ class Photo(HasId):
         position: Position,
         tags: dict[Tag, Position],
         color_labels: set[ColorLabel],
+        output_width: int,
+        output_height: int,
+        aspect_ratio: float,
     ):
         self.id: int = id
-        self.filepath: str = os.path.normpath(filepath)
+        self.filepath: str = path.normpath(filepath)
         self.version: int = version
         self.datetime_taken: datetime.datetime = datetime_taken
         flags: int = flags
@@ -81,6 +88,9 @@ class Photo(HasId):
         self.position: Position = position
         self.tags: dict[Tag, Position] = tags
         self.color_labels: set[ColorLabel] = color_labels
+        self.output_width: int = output_width
+        self.output_height: int = output_height
+        self.aspect_ratio: float = aspect_ratio
 
         # extracting ratings from image flags with mask 0x7:
         # https://github.com/darktable-org/darktable/blob/0f5bd178/src/common/ratings.c#L52
@@ -114,7 +124,7 @@ class Photo(HasId):
     def tmp_xmp_name(self):
         if self._tmp_xmp_name is None:
             fd, self._tmp_xmp_name = tempfile.mkstemp(suffix=".xmp")
-            os.close(fd)
+            close(fd)
 
         return self._tmp_xmp_name
 
@@ -187,6 +197,30 @@ class Photo(HasId):
 
         return return_
 
+    def has_tag(self, str_, ignore_case=True, ignore_dt_tags=False):
+        """Check if a photo has a tag
+
+        Arguments:
+            ignore_case: case insensitive matching. Default: True
+            ignore_dt_tags: ignore daktable default tags. Default: False
+
+        Returns:
+            Bool value
+        """
+        # Replace "|" in str_ with "\|" so regex correctly interprets as literal "|"
+        str_ = str_.replace("|", "\\|")
+        flags = re.IGNORECASE if ignore_case else re.NOFLAG
+
+        # Loop through tags to regex match the str_ tag
+        for tag in self.tags:
+            # if ignore_dt_tags and re.match("darktable", tag.name) is not None:
+            if ignore_dt_tags and tag.name.startswith("darktable|"):
+                continue
+            if re.search(rf"(?:^|\|)({str_})(?:$|\|)", tag.name, flags=flags):
+                return True
+
+        return False
+
     def __repr__(self):
         return (
             self.__class__.__name__
@@ -206,11 +240,14 @@ class Photo(HasId):
         )
 
     def __del__(self):
-        if self._tmp_xmp_name is not None:
-            os.unlink(self._tmp_xmp_name)
+        try:
+            if self._tmp_xmp_name is not None:
+                unlink(self._tmp_xmp_name)
+        except FileNotFoundError:
+            pass
 
 
-# Not used
+# TODO: seems unfinished and i dont understand the idea
 class FilenameFormat:
     """Implements a Darktable format string for export filenames.
     Only supports a subset of variables as not all are used here.
@@ -296,10 +333,20 @@ class DarktableLibrary:
     DATA_DB = "data.db"
     LIBRARY_DB = "library.db"
 
-    def __init__(self, config_dir):
+    def __init__(self, config_dir, library_dbpath=None, data_dbpath=None):
         self.config_dir = config_dir
-        self.data_dbpath = path.join(config_dir, self.DATA_DB)
-        self.library_dbpath = path.join(config_dir, self.LIBRARY_DB)
+        if library_dbpath:
+            if not path.exists(library_dbpath):
+                raise IOError("library path doesn't exist")
+            self.library_dbpath = library_dbpath
+        else:
+            self.library_dbpath = path.join(config_dir, self.LIBRARY_DB)
+        if data_dbpath:
+            if not path.exists(data_dbpath):
+                raise IOError("data path doesn't exist")
+            self.data_dbpath = data_dbpath
+        else:
+            self.data_dbpath = path.join(config_dir, self.DATA_DB)
         self.data_conn = readonly_sqlite_connection(self.data_dbpath)
         self.library_conn = readonly_sqlite_connection(self.library_dbpath)
 
@@ -317,6 +364,7 @@ class DarktableLibrary:
         self.library_conn.close()
 
     def _row_to_photo(self, row: sqlite3.Row, separator: str) -> Photo:
+        # TODO: add missing fields
         return Photo(
             id=int(row["id"]),
             filepath=row["filepath"],
@@ -343,10 +391,13 @@ class DarktableLibrary:
                 if row["color_label"] is not None
                 else set()
             ),
+            output_width=row["output_width"],
+            output_height=row["output_height"],
+            aspect_ratio=row["aspect_ratio"],
         )
 
     def _select_photos(
-        self, where_clause: str = "", args: tuple = (), limit: int = None
+        self, where_clause: str = "", bindings: tuple = (), limit: int = None
     ) -> list[Photo]:
         cur = self.library_conn.cursor()
         separator = "#~~~#"
@@ -354,11 +405,8 @@ class DarktableLibrary:
             cur.execute(
                 f"""--sql
                 SELECT
-                    images.id,
+                    images.*,
                     rtrim(film_rolls.folder, '/') || '/' || images.filename AS filepath,
-                    images.version,
-                    images.datetime_taken,
-                    images.flags,
                     film_rolls.id AS film_id,
                     film_rolls.folder AS film_directory,
                     images.position AS film_position,
@@ -376,7 +424,7 @@ class DarktableLibrary:
                 GROUP BY images.id
                 {f'LIMIT {limit}' if limit is not None and limit >= 0 else ''}
                 """,
-                (separator, separator, separator, separator) + args,
+                (separator, separator, separator, separator) + bindings,
             )
             result = cur.fetchall()
 
@@ -407,15 +455,25 @@ class DarktableLibrary:
             """,
             (tag_name,),
         )
-        id, name = cur.fetchone()
+        try:
+            id, name = cur.fetchone()
+        # No matching tag
+        except TypeError:
+            raise TagDoesntExistError
 
         return Tag(int(id), name)
 
-    def get_tagged_photos(self, tag: Tag) -> list[Photo]:
+    def get_tagged_photos(self, tag: Tag, include_dt_tags: bool = False) -> list[Photo]:
+        # Whether to include search in darktable default tags
+        include_dt_tags = (
+            "AND LOWER(data.tags.name) NOT LIKE 'darktable%'"
+            if not include_dt_tags
+            else ""
+        )
         return self._select_photos(
-            """--sql
-            WHERE tagged_images.tagid=? AND LOWER(data.tags.name) NOT LIKE 'darktable%'
-            """,
+            (f"""--sql
+                WHERE tagged_images.tagid=? {include_dt_tags}
+                """),
             (tag.id,),
         )
 
@@ -450,6 +508,16 @@ class DarktableLibrary:
             for photo in self.get_tagged_photos(tag):
                 result[tag].append(photo)
         return result
+
+    def get_photos_color_labeled(self, color: ColorLabel) -> list[Photo]:
+        """Get photos marked with "color" color label"""
+
+        return self._select_photos(
+            """--sql
+            WHERE color_labels.color == ?
+            """,
+            (str(color.value),),
+        )
 
 
 def modify_metadata(filepath, exif_artist, exif_copyright):
