@@ -51,7 +51,7 @@ class RenderingIntent(Enum):
     ABSOLUTE_COLORIMETRIC = 4
 
 
-class OnConflictActions(Enum):
+class OnConflictAction(Enum):
     """https://github.com/darktable-org/darktable/blob/master/src/imageio/storage/disk.c#L52
 
     This may change if upstream adds an "on conflict" cli option

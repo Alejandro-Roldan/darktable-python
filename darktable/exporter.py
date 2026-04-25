@@ -35,8 +35,13 @@ class Export:
     @filepath.setter
     def filepath(self, value):
         self._filepath = value
+        self._filename = path.basename(value)
         self._width = None
         self._height = None
+
+    @property
+    def filename(self):
+        return self._filename
 
     @property
     def width(self):
@@ -129,7 +134,7 @@ def export_with_cache(
     exif_artist: str = None,
     exif_copyright: str = None,
     xmp_changes: list = [],
-    on_conflict_action: formats.OnConflictActions = None,
+    on_conflict_action: formats.OnConflictAction = None,
 ) -> Export:
     """Exports a photo to a directory through Darktable's CLI interface,
     but only if there are changes to the XMP or it hasn't been exported yet.
@@ -221,7 +226,7 @@ def export(
     exif_artist: str = None,
     exif_copyright: str = None,
     xmp_changes: list = [],
-    on_conflict_action: formats.OnConflictActions = None,
+    on_conflict_action: formats.OnConflictAction = None,
 ) -> Export:
     """Exports a photo to a directory through Darktable's CLI interface.
     Returns a copy of the photo instance where export_filepath is set.
@@ -278,7 +283,7 @@ def export(
                                             image export. Only applied if calling export
                                             with a Photo object
 
-        on_conflict_action: formats.OnConflictActions
+        on_conflict_action: formats.OnConflictAction
                                             What to do if file already exists
 
     More info on the darktable-cli arguments:
@@ -334,13 +339,13 @@ def export(
         ]
 
         # Add options on conflict handling
-        if isinstance(on_conflict_action, formats.OnConflictActions):
+        if isinstance(on_conflict_action, formats.OnConflictAction):
             command += on_conflict_action.conf()
         # Continue normally if None and raise error if unexpected type
         elif on_conflict_action is not None:
             raise CommandError(
                 "on_conflict_action is not expected type "
-                f'"{formats.OnConflictActions.__name__}"'
+                f'"{formats.OnConflictAction.__name__}"'
             )
 
         # Add format options to the command
