@@ -379,7 +379,7 @@ def export(
     # extract the exported filename
     match = re.search(r"exported to `([^\']+)\'", result.stdout)
     skip = re.search(
-        r"skipping \(not modified since export\) `([^\']+)\'", result.stdout
+        r"skipping (?:\(not modified since export\) )?`([^\']+)\'", result.stdout
     )
     if not match and not skip:
         raise ExportError("expected darktable-cli output to contain filename")
