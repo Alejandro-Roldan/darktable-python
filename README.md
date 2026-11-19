@@ -71,16 +71,13 @@ jxl_exporter_options = {
     "exif_artist": None,
     "exif_copyright": None,
     "xmp_changes": [remove_exposure],
+    "on_conflict_action": formats.OnConflictAction.OVERWRITE,
 }
 
 # Open darktable library
 with darktable.DarktableLibrary(CONFIG_DIR) as library:
     # And search for images labeled in purple
-    for_print_photo_list = [
-        photo
-        for photo in library.get_photos()
-        if darktable.ColorLabel.PURPLE in photo.color_labels
-    ]
+    for_print_photo_list = library.get_photos_color_labeled(darktable.ColorLabel.PURPLE)
 
 # Loop and export
 for photo in for_print_photo_list:

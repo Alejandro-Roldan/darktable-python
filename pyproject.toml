@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "darktable-python"
-version = "0.5.1"
+version = "0.5.2"
 description = ""
 readme = {file = "README.md", content-type = "text/markdown"}
 license = {file = "LICENSE"}
